@@ -32,32 +32,45 @@ class Convex_Polygons:
         else:
             return False
 
-    @classmethod
-    def calc_angle(cls, p1, p2, p3):
+    @staticmethod
+    def calc_z_vect_prod(p1, p2, p3):
+        ''' Возвращает z-компоненту векторного произведения '''
         a = (p1[0] - p2[0], p1[1] - p2[1])  # вектор p2-p1
         b = (p3[0] - p2[0], p3[1] - p2[1])  # вектор p2-p3
-        vect_prod = abs(a[0] * b[1] - a[1] * b[0])   # модуль векторного произведения    
-        scal_prod = a[0] * b[0] + a[1] * b[1]   # скалярного произведения
-        phi =  math.degrees( math.atan2(vect_prod, scal_prod) )
+        vect_prod = a[0] * b[1] - a[1] * b[0]
+        return vect_prod
+    
+    @staticmethod
+    def calc_scal_prod(p1, p2, p3):
+        a = (p1[0] - p2[0], p1[1] - p2[1])  # вектор p2-p1
+        b = (p3[0] - p2[0], p3[1] - p2[1])  # вектор p2-p3
+        scal_prod = a[0] * b[0] + a[1] * b[1]   # скалярное произведение
+        return scal_prod
+
+    @staticmethod
+    def set_order(vertices):
+        '''Возвращает упорядоченный список вершин (т.е. порядок против часовой стрелки)'''
+        p1, p2, p3 = vertices[0], vertices[1], vertices[2]
+        vect_prod = Convex_Polygons.calc_z_vect_prod(p1, p2, p3)
+        if vect_prod > 0:  # => по часовой стрелке расположены вершины => реверс списка
+            vv = vertices[1:]
+            return [vertices[0]] + vv[::-1]
+        else:
+            return vertices
+
+    @staticmethod
+    def calc_angle(p1, p2, p3):
+        vect_prod = Convex_Polygons.calc_z_vect_prod(p1, p2, p3)   
+        scal_prod = Convex_Polygons.calc_scal_prod(p1, p2, p3)
+        phi =  math.degrees( math.atan2(abs(vect_prod), scal_prod) )
         return phi
 
-
-    # @classmethod
-    # def calc_angle(cls, p1, p2, p3):
-    #     '''Считаем угол в очередности p1, p2 и p3'''
-    #     a = math.dist(p1, p2)
-    #     b = math.dist(p2, p3)
-    #     c = math.dist(p1, p3)
-
-    #     if math.isclose(a+b, c, abs_tol=1e-6):
-    #         return 180
-
-    #     return math.degrees(math.acos((a**2 + b**2 - c**2)/(2*a*b)))
-
-    @classmethod
-    def calc_square_triangle(cls, p1, p2, p3):
+    @staticmethod
+    def calc_square_triangle(p1, p2, p3):
         '''Возвращает площадь треугольника через векторное произведение'''
         return abs((p2[0] - p1[0]) * (p3[1] - p1[1]) - (p3[0] - p1[0]) * (p2[1] - p1[1])) / 2
+
+    
 
     def calc_square(self):
         list_triangles = self.triangulate()
@@ -87,11 +100,8 @@ class Convex_Polygons:
 
         if not self.isConvex():
             raise ValueError("многоугольник невыпуклый или вырожденный")
-    
-        # if(self.flag_convex):
-        #     print("This is convex")
-        # else:
-        #     print("This is non-convex")
+
+        self.vertices = self.set_order(vertices)
 
 
     def triangulate(self):    # для выпуклого!
@@ -103,29 +113,88 @@ class Convex_Polygons:
             ans.append([v[0], v[i], v[i+1]])
         return ans
 
+    def clip_segment(self, A, B):
+        '''Часть отрезка AB внутри многоугольника: (P_in, P_out) или None'''
+        v, n = self.vertices, self.n
+        t_in, t_out = 0.0, 1.0
+        for i in range(n):
+            C, D = v[i], v[(i + 1) % n]
+            sA = self.calc_z_vect_prod(D, C, A)  # C->D, C->A
+            sB = self.calc_z_vect_prod(D, C, B)  # C->D, C->B
+            d = sB - sA
+            if d == 0:                      # параллелен ребру
+                if sA < 0:
+                    return None
+                continue
+            t = -sA / d
+            if d > 0:
+                t_in = max(t_in, t)
+            else:
+                t_out = min(t_out, t)
+            if t_in > t_out:
+                return None
+        P = lambda t: (A[0] + t * (B[0] - A[0]), A[1] + t * (B[1] - A[1]))
+        return P(t_in), P(t_out)
 
-poly = Convex_Polygons([(0, 0), (1, 2), (3, 9)])
+    def clip_by_lines(self, other):
+        ''' Возвращает список ребер, полученных обрезанием многоугольника self ребрами многоугольника other '''
+        iter_vertices_other = itertools.cycle(other.vertices)
+        fir = next(iter_vertices_other)
+        sec = next(iter_vertices_other)
+        m = other.n
+        ans1 = []
+        for _ in range(m):
+            el = self.clip_segment(fir, sec)
+            fir = sec
+            sec = next(iter_vertices_other)
+            if el == None:
+                continue
+            else:
+                ans1.append(el)
+#        print(ans1)
+        return ans1
 
-v1 = [(0, 0), (1, 2), (5, 6)]
 
-v2 = [(0, 0), (4, 0), (4, 4), (0, 4)]
+    @staticmethod
+    def same(p, q, eps=1e-9):
+        ''' Сравнение двух точек p и q '''
+        return abs(p[0] - q[0]) < eps and abs(p[1] - q[1]) < eps
 
-v3 = [(0, 0), (0, 4), (4, 4), (4, 0)]
-v4 = [(0, 0), (4, 2), (0, 4), (1, 2)]
-v5 = [(2, 0), (4, 0), (6, 2), (4, 4), (2, 4), (0, 2)]
+    def intersect(self, other):
+        segments = self.clip_by_lines(other) + other.clip_by_lines(self)
 
-v6 = [(0, 0), (1, 1), (2, 2)]
+        pts = []
+        for seg in segments:
+            for p in seg:
+                if not any(self.same(p, q) for q in pts):
+                    pts.append(p)
+        if len(pts) < 3:
+            return None
 
-v7 = [(0, 0), (4, 0), (4, 4), (0, 4)]
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        pts.sort(key=lambda p: math.atan2(p[1] - cy, p[0] - cx))
 
-v8 = [(0,0), (4,0), (4,0), (0,4)]
 
-for x in (v1, v2, v3, v4, v5, v6, v7, v8):
-    try:
-        poly = Convex_Polygons(x)
-    except ValueError as e:
-        print("отвергнут:", e)
-    else:
-        print("площадь:", poly.calc_square())
-        print("триангуляция:", poly.triangulate())
+        return Convex_Polygons(pts)
 
+    def __str__(self):
+        return str(self.vertices)
+
+
+    def includes(self, other):
+        ''' Возвращает True, если многоугольник other находится внутри многоугольника self '''
+        inter = self.intersect(other)
+        if inter is None: return False
+        if math.isclose(inter.calc_square(), other.calc_square(), abs_tol=1e-9):
+            return True
+        return False
+
+
+poly = Convex_Polygons([(0, 0), (0, 4), (4, 4), (4, 0)])
+poly2 = Convex_Polygons([(-2, 2), (2, 2), (2, 5)])
+poly3 = Convex_Polygons([(1, 2), (2, 2), (2, 3)])
+
+
+poly4 = Convex_Polygons([(0, 2), (2, 4), (4, 4), (6, 2), (4, 0), (2, 0)])
+poly5 = Convex_Polygons([(3, 0), (1, 4), (5, 4)])
